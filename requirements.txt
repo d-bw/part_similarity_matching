@@ -1,0 +1,9 @@
+transformers==4.33.2
+opencv
+numpy
+matplotlib
+sklearn
+pillow
+torch>=2.0.1
+argparse
+torchvision
