@@ -6,4 +6,3 @@ sklearn
 pillow
 torch>=2.0.1
 argparse
-torchvision
