@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 
-def preprocess_img(raw_image):
+def preprocess_img_byCanny(raw_image):
   raw_image = cv2.imread(raw_image)
   # 将图像转换为灰度图
   gray = cv2.cvtColor(raw_image, cv2.COLOR_BGR2GRAY)
@@ -53,6 +53,53 @@ def preprocess_img(raw_image):
   else:
     return raw_image
 
+def preprocess_img_byRmBackground(raw_image):
+  image = cv2.imread(raw_image)
+
+  # 将图像转换为灰度图
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+  # 使用大津法确定阈值
+  _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+  # 查找轮廓
+  contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+  # 创建一个与原始图像相同大小的掩码
+  mask = np.zeros_like(image)
+
+  # 绘制轮廓到掩码上
+  cv2.drawContours(mask, contours, -1, (255, 255, 255), thickness=cv2.FILLED)
+
+  # 使用掩码提取零件
+  result = np.bitwise_and(image, mask)
+
+  bounding_boxes = []
+  # 在原图上绘制边界框
+  for contour in contours:
+      x, y, w, h = cv2.boundingRect(contour)
+      bounding_boxes.append(((x, y), (x + w, y + h)))
+      #cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+
+  bounding_boxes.sort(key=lambda box: (box[1][0] - box[0][0]) * (box[1][1] - box[0][1]), reverse=True)
+  if len(bounding_boxes) > 0:
+    # 绘制面积最大的边界框到原图上
+    x1, y1 = bounding_boxes[0][0]
+    x2, y2 = bounding_boxes[0][1]
+    #增加10个单位容错区间
+    x1-=10
+    y1-=10
+    x2+=10
+    y2+=10
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cropped_image = image[y1:y2, x1:x2]
+    # 显示结果
+    #cv2_imshow(image)
+    cropped_pil_image=Image.fromarray(cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB))
+    return cropped_pil_image
+  else: 
+    return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
 
 #提取主要物体mask
@@ -148,16 +195,6 @@ def get_features(contours):
   return features
 
 
-'''
-#计算余弦相似度
-def calculate_cosine_similarity(feature1, feature2):
-    # 将特征向量转换为1xN的形状
-    feature1 = np.reshape(feature1, (1, -1))
-    feature2 = np.reshape(feature2, (1, -1))
-
-    return cosine_similarity(feature1, feature2)[0][0]
-'''
-
 #去除图像噪声——去除重复叠加轮廓
 def remove_duplicate_contours(contours, hierarchy, epsilon=10):
     unique_contours = []
@@ -182,7 +219,7 @@ def remove_duplicate_contours(contours, hierarchy, epsilon=10):
     return unique_contours, [np.array(unique_hierarchy, dtype=np.int32)]
 
 #渲染最大内切多边形
-def draw_bitImage_byContours(contours, hierarchy, image_size=224, flex_ratio=0):
+def get_bitImage_byContours(contours, hierarchy, image_size=224, flex_ratio=0):
   #预留缓冲区间
   contours_size=image_size-2*flex_ratio
   
@@ -247,11 +284,10 @@ if __name__=='__main__':
   generator =  pipeline("mask-generation", model=args.model_id, device = device, points_per_batch = 256)
   
   image_url = args.image_path
-  preprocessed_image=preprocess_img(image_url)
+  preprocessed_image=preprocess_img_byRmBackground(image_url)
   
   outputs = generator(preprocessed_image, points_per_batch = 256)
 
-  
   
   #plt.imshow(np.array(raw_image))
   #ax = plt.gca()
@@ -259,8 +295,8 @@ if __name__=='__main__':
   main_object_mask = extract_main_object_mask(outputs["masks"])
   contours,hierarchy=get_contours_on_image(main_object_mask)
   #show_mask(main_object_mask, ax=ax)
-  contours,hierarchy=remove_duplicate_contours(contours,hierarchy)
-  image=draw_bitImage_byContours(contours,hierarchy)
+  #contours,hierarchy=remove_duplicate_contours(contours,hierarchy)
+  image=get_bitImage_byContours(contours,hierarchy)
   
   image.save('show_segment.jpg')
   #features = get_features(contours)

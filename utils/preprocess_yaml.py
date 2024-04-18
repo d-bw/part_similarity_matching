@@ -5,7 +5,7 @@ from PIL import Image
 #from google.colab.patches import cv2_imshow
 # 读取yaml文件
 import argparse
-from feature_extract import remove_duplicate_contours, draw_bitImage_byContours
+from feature_extract import remove_duplicate_contours, get_bitImage_byContours
 
 
 def extract_contours(data,index):
@@ -41,13 +41,16 @@ def extract_contours(data,index):
   scaled_part_height = int(part_height * scale_factor)+100
   image_resized = np.zeros((scaled_part_height, scaled_part_width), dtype=np.uint8)
   pts = np.array([(int((point['x'] - min_x) * scale_factor), int((point['y'] - min_y) * scale_factor)) for point in outside_loop], dtype=np.int32)
-  cv2.polylines(image_resized, [pts], isClosed=True, color=255, thickness=1)
+  cv2.fillPoly(image_resized, [pts], color=255)
+  # 填充内部轮廓为黑色
   for loop in inside_loops:
-    pts = np.array([(int((point['x'] - min_x) * scale_factor), int((point['y'] - min_y) * scale_factor)) for point in loop], dtype=np.int32)
-    cv2.polylines(image_resized, [pts], isClosed=True, color=255, thickness=1)
+      pts = np.array([(int((point['x'] - min_x) * 2), int((point['y'] - min_y) * 2)) for point in loop], dtype=np.int32)
+      cv2.fillPoly(image_resized, [pts], color=0)
+
   # 查找轮廓
   contours,hierarchy = cv2.findContours(image_resized, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
+  
+  #cv2.imwrite('test.jpg',image_resized)  
   return contours,hierarchy
 
 
@@ -61,16 +64,17 @@ if __name__=='__main__':
                      help='input your yaml path')
   args = parser.parse_args() 
 
-  file_name='../test_resource/test.yaml'
+  #file_name='../test_resource/test.yaml'
   with open(args.file, 'r') as file:
     data = yaml.load(file, Loader=yaml.FullLoader)
 
-  contours,hierarchy=extract_contours(data,19)
-  contours,hierarchy=remove_duplicate_contours(contours,hierarchy)
 
-  image=draw_bitImage_byContours(contours,hierarchy)
-  
-  image.save('show_yaml.jpg')
+  contours,hierarchy=extract_contours(data,42)
+  #contours,hierarchy=remove_duplicate_contours(contours,hierarchy)
+
+  image=get_bitImage_byContours(contours,hierarchy)
+
+  image.save("show_yaml.jpg")
 
   
 
