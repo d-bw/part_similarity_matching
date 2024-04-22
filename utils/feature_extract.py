@@ -40,11 +40,11 @@ def preprocess_img_byCanny(raw_image):
       largest_box_index = sorted_indices[0]
       x, y, w, h = bounding_boxes[largest_box_index]
       #cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-      #额外预留20个单位的误差
-      x -= 10
-      y -= 10
-      w += 20
-      h += 20
+      #额外预留30个单位的误差
+      x -= 15
+      y -= 15
+      w += 30
+      h += 30
 
       # 裁剪图像
       cropped_img = raw_image[max(y, 0):min(y+h, raw_image.shape[0]), max(x, 0):min(x+w, raw_image.shape[1])]
@@ -160,7 +160,7 @@ def get_contours_on_image(mask):
       # 计算长、宽
       length = w
       width = h
-      cv2.drawContours(annotated_image, [contour], -1, (0, 0, 255), 2)  # 红色，线宽为2
+      #cv2.drawContours(annotated_image, [contour], -1, (0, 0, 255), 2)  # 红色，线宽为2
       # 输出bounding box坐标和长宽
       #print(f"Bounding Box: (x:{x}, y:{y}, w:{w}, h:{h}), Length: {length}, Width: {width}")
 
@@ -176,23 +176,6 @@ def get_contours_on_image(mask):
 
     #cv2.imwrite("part_annotated_image.jpg", annotated_image)
     return contours,hierarchy
-
-#计算特征-Hu矩
-def calculate_hu_moments(contour):
-    moments = cv2.moments(contour)
-    hu_moments = cv2.HuMoments(moments).flatten()
-    return hu_moments
-
-
-#特征提取—Hu矩
-def get_features(contours):
-  features = []
-  for contour in contours:
-    hu_moments = calculate_hu_moments(contour)
-    features.append(hu_moments)
-
-  features = np.array(features)
-  return features
 
 
 #去除图像噪声——去除重复叠加轮廓
@@ -218,52 +201,123 @@ def remove_duplicate_contours(contours, hierarchy, epsilon=10):
 
     return unique_contours, [np.array(unique_hierarchy, dtype=np.int32)]
 
-#渲染最大内切多边形
+
 def get_bitImage_byContours(contours, hierarchy, image_size=224, flex_ratio=0):
-  #预留缓冲区间
-  contours_size=image_size-2*flex_ratio
-  
-  # 找到最大边界
-  max_x = max_y = 0
-  min_x, min_y = float('inf'), float('inf')
+    # 预留缓冲区间
+    contours_size = image_size - 2 * flex_ratio
 
-  for contour in contours:
-      for point in contour[:, 0]:
-          if point[0] > max_x:
-              max_x = point[0]
-          if point[0] < min_x:
-              min_x = point[0]
-          if point[1] > max_y:
-              max_y = point[1]
-          if point[1] < min_y:
-              min_y = point[1]
+    # 找到最大边界
+    max_x = max_y = 0
+    min_x, min_y = float('inf'), float('inf')
 
-  # 计算新图像的尺寸
-  width = max_x - min_x
-  height = max_y - min_y
-  scale = min(contours_size / width, contours_size / height)
-  # 创建一个新的空白图像
-  blank_image = np.zeros((image_size, image_size), np.uint8)
+    for contour in contours:
+        for point in contour[:, 0]:
+            if point[0] > max_x:
+                max_x = point[0]
+            if point[0] < min_x:
+                min_x = point[0]
+            if point[1] > max_y:
+                max_y = point[1]
+            if point[1] < min_y:
+                min_y = point[1]
+
+    # 计算新图像的尺寸
+    width = max_x - min_x
+    height = max_y - min_y
+
+    scale = min(contours_size / width, contours_size / height)
+
+    # 计算偏移量
+    offset_x, offset_y = min_x-flex_ratio, min_y-flex_ratio
+
+    # 创建一个新的空白图像
+    blank_image = np.zeros((image_size, image_size), np.uint8)
+
+    # 将轮廓绘制在新图像上
+    for i, contour in enumerate(contours):
+        contour_scaled = (contour - (offset_x, offset_y)) * scale
+        contour_scaled = contour_scaled.astype(np.int32)
+
+        # 如果轮廓没有父轮廓（即它是外部轮廓），则绘制为白色
+        if hierarchy[0][i][3] == -1:
+            cv2.drawContours(blank_image, [contour_scaled], -1, (255, 255, 255), thickness=cv2.FILLED)
+        else:
+            # 如果轮廓有父轮廓（即它是内部孔洞），则绘制为黑色
+            cv2.drawContours(blank_image, [contour_scaled], -1, (0, 0, 0), thickness=cv2.FILLED)
+
+    blank_image = Image.fromarray(cv2.cvtColor(blank_image, cv2.COLOR_BGR2RGB))
+    return blank_image
 
 
 
-  # 将轮廓绘制在新图像上
-  offset_x, offset_y = -min_x, -min_y
-  for i, contour in enumerate(contours):
+def find_outer_contour(contours, hierarchy):
+    outer_contours = []
+    for i, contour in enumerate(contours):
+        if hierarchy[0][i][3] == -1:  # 检查轮廓是否为外部轮廓
+            outer_contours.append(contour)
+    areas = [cv2.contourArea(contour) for contour in outer_contours]
+    return outer_contours[np.argmax(areas)]
 
-      contour_scaled = (contour - (offset_x, offset_y)) * scale + (offset_x, offset_y)
-      contour_scaled = contour_scaled.astype(np.int32)
+def rotate_contours(contours, angle, center):
+    rotated_contours = []
+    for contour in contours:
+        contour = contour.reshape(-1, 2)
+        rotated_contour = cv2.transform(contour[None, :, :], cv2.getRotationMatrix2D(center, angle, 1))
+        rotated_contours.append(rotated_contour.reshape(-1, 1, 2))
+    return rotated_contours
 
-      # 如果轮廓没有父轮廓（即它是外部轮廓），则绘制为白色
-      if hierarchy[0][i][3] == -1:
-          cv2.drawContours(blank_image, [contour_scaled], -1, (255, 255, 255), thickness=cv2.FILLED)
-      else:
+def align_contours(contours1, contours2, hierarchy1, hierarchy2):
+    # 找到contours1和contours2的最外层轮廓
+    outer_contour1 = find_outer_contour(contours1, hierarchy1)
+    outer_contour2 = find_outer_contour(contours2, hierarchy2)
 
-          # 如果轮廓有父轮廓（即它是内部孔洞），则绘制为黑色
-          cv2.drawContours(blank_image, [contour_scaled], -1, (0, 0, 0), thickness=cv2.FILLED)
+    # 计算最外层轮廓的方向（角度） using image moments
+    moments1 = cv2.moments(outer_contour1)
+    angle1 = 0.5 * np.arctan2(2 * moments1['mu11'], moments1['mu20'] - moments1['mu02']) * 180 / np.pi
 
-  blank_image = Image.fromarray(cv2.cvtColor(blank_image, cv2.COLOR_BGR2RGB))
-  return blank_image
+    moments2 = cv2.moments(outer_contour2)
+    angle2 = 0.5 * np.arctan2(2 * moments2['mu11'], moments2['mu20'] - moments2['mu02']) * 180 / np.pi
+
+    # 获取旋转中心
+    center1 = tuple(np.mean(outer_contour1, axis=0).astype(int).flatten().tolist())
+    center2 = tuple(np.mean(outer_contour2, axis=0).astype(int).flatten().tolist())
+
+    # 旋转contours1中的所有轮廓
+    rotated_contours1 = rotate_contours(contours1, angle1 - angle2, center1)
+
+    return  rotated_contours1, hierarchy1, angle2 - angle1
+
+
+
+def calculate_overlap(image1, image2):
+
+    intersection = cv2.bitwise_and(image1, image2)
+    area_intersection = np.sum(intersection == 255)
+
+    area_image2 = np.sum(image2 == 255)
+
+    overlap_ratio = area_intersection / area_image2 if area_image2 > 0 else 0
+    return overlap_ratio
+
+
+def find_best_rotation(contours1, hierarchy1, image1,image2):
+    image1=cv2.cvtColor(cv2.cvtColor(np.array(image1), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+    image2=cv2.cvtColor(cv2.cvtColor(np.array(image2), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+    best_overlap = 0
+    best_angle = 0
+    outer_contour1 = find_outer_contour(contours1, hierarchy1)
+    image1=cv2.cvtColor(cv2.cvtColor(np.array(image1), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+    center1 = tuple(np.mean(outer_contour1, axis=0).astype(int).flatten().tolist())
+    for angle in range(0, 360):
+        rotated_contour1 = rotate_contours(contours1, angle, center1)
+        image1=get_bitImage_byContours(rotated_contour1, hierarchy1)
+        image1=cv2.cvtColor(cv2.cvtColor(np.array(image1), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+        overlap = calculate_overlap(image1, image2)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_angle = angle
+            #print(best_angle,best_overlap)
+    return best_angle, best_overlap ,rotated_contour1,hierarchy1
 
 
 

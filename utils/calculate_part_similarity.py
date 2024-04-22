@@ -5,12 +5,15 @@ import yaml
 from preprocess_yaml import extract_contours
 from feature_extract import (preprocess_img_byRmBackground,
                 extract_main_object_mask, 
-                get_contours_on_image, 
-                remove_duplicate_contours, 
-                get_bitImage_byContours)
+                get_contours_on_image,  
+                get_bitImage_byContours,
+                align_contours,
+                show_mask,
+                find_best_rotation
+                )
 from statistics import mean
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 #简单Hu矩对比最外层轮廓，不考虑孔洞——适用于简单情况
 def simple_HuMoment(image1,image2):
@@ -56,6 +59,77 @@ def avg_HuMoment(contours1,contours2):
   return 1 / (1 + similarity)
 
 
+# orb特征点提取，对比相似度
+def calculate_orb(image1,image2):
+  image1 = np.array(image1)
+  image2 = np.array(image2)
+
+  orb = cv2.ORB_create(nfeatures=2048)
+  keypoints1, descriptors1 = orb.detectAndCompute(image1, None)
+  keypoints2, descriptors2 = orb.detectAndCompute(image2, None)
+
+  if descriptors1 is None or descriptors2 is None:
+      #print("Error: Failed to extract descriptors.")
+      return "nav"
+
+  #BFM特征匹配器
+  bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+  matches = bf.match(descriptors1, descriptors2)
+
+  matches = sorted(matches, key=lambda x: x.distance)
+  match_img = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches[:10], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+  score = sum([match.distance for match in matches]) / len(matches)
+
+
+  # FLANN匹配器参数
+#   FLANN_INDEX_LSH = 6
+#   index_params = dict(algorithm=FLANN_INDEX_LSH,
+#                       table_number=6,
+#                       key_size=12,
+#                       multi_probe_level=1)
+#   search_params = dict(checks=50)
+
+#   # 创建FLANN匹配器
+#   flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+#   # 使用FLANN匹配器进行特征匹配
+#   matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+#   print(len(matches))
+# # 应用比率测试以保留良好的匹配
+#   good_matches = []
+#   for match_pair in matches:
+#     if len(match_pair) < 2:  # 检查是否有足够的匹配项
+#         continue
+#     m, n = match_pair
+#     if m.distance < 0.7 * n.distance:
+#         good_matches.append(m)
+
+#   match_img = cv2.drawMatches(image1, keypoints1, image2, keypoints2, good_matches[:10], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+  #score = sum([match.distance for match in good_matches]) / len(good_matches)        
+  cv2.imwrite('show_features.jpg',match_img) 
+  return score
+
+
+#最大面积计算相似度
+def calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2):
+  contours1, hierarchy1, first_rotate_angle = align_contours(contours1, contours2, hierarchy1, hierarchy2)
+  #print(first_rotate_angle)
+
+  best_angle, best_overlap ,rotated_contour1,hierarchy1=find_best_rotation(contours1, hierarchy1, image1,image2)
+  #print(best_angle, best_overlap)
+
+  image1=get_bitImage_byContours(rotated_contour1,hierarchy1)
+ 
+  # image1.save('show_segment.jpg')
+  # image2.save("show_yaml.jpg")
+
+  return (best_angle+first_rotate_angle)%360, best_overlap
+
+
+
+
+
+
 
 #处理照片零件
 device= "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,15 +139,25 @@ generator =  pipeline("mask-generation", model="facebook/sam-vit-base", device =
 
 preprocessed_image=preprocess_img_byRmBackground("./test_resource/test17.jpg")
 
+
+
+
+
 outputs = generator(preprocessed_image, points_per_batch = 256)
 
+ax = plt.gca()
+plt.axis("off")
+plt.imshow(preprocessed_image)
+
+for mask in outputs["masks"]:
+  show_mask(mask,ax)
 
 main_object_mask = extract_main_object_mask(outputs["masks"])
 
 contours1,hierarchy1 = get_contours_on_image(main_object_mask)
-
-
 image1=get_bitImage_byContours(contours1,hierarchy1)
+
+
 
 
 #处理图纸零件
@@ -84,49 +168,26 @@ with open("./test_resource/test.yaml", 'r') as file:
 for i in range(len(data['parts'])):
 
   contours2,hierarchy2=extract_contours(data,i)
-  image2=get_bitImage_byContours(contours2,hierarchy2)
-  if avg_HuMoment(contours1,contours2) > 0.998:
-    print(f"该零件与图纸第{i}个零件的相似度为{avg_HuMoment(contours1,contours2)}")
   
-
-
-
-
-
-
-
-'''
-sift = cv2.SIFT_create()
-image1 = np.array(image1)
-flann = cv2.FlannBasedMatcher()
-keypoints1, descriptors1 = sift.detectAndCompute(image1, None)
-  
-for i in range(len(data['parts'])):
-  contours2,hierarchy2=extract_contours(data,i)
-
   image2=get_bitImage_byContours(contours2,hierarchy2)
-  image2 = np.array(image2)
-  # 检测特征点和计算描述符
+  # image1 = cv2.cvtColor(cv2.cvtColor(np.array(image1), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+  # image2 = cv2.cvtColor(cv2.cvtColor(np.array(image2), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
+  
+  _ , ratio = calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2)
+  if ratio >0.90:  
+    print(f"该零件与图纸第{i}个零件的相似度为{ratio}")
+ 
 
-  keypoints2, descriptors2 = sift.detectAndCompute(image2, None)
 
-  # 创建FLANN匹配器
+# contours2,hierarchy2=extract_contours(data,33)
 
-  if descriptors1 is not None and descriptors2 is not None:
-    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
-    # 根据Lowe's ratio test选择好的匹配点
-    good_matches = []
-    for m, n in matches:
-        if m.distance < 0.7 * n.distance:
-            good_matches.append(m)
+# image2=get_bitImage_byContours(contours2,hierarchy2)
 
-    # 计算相似度
-    similarity = len(good_matches) / max(len(keypoints1), len(keypoints2))
-    print(f"index:{i}----Similarity: {similarity}")
-  else: 
-    print(f"index:{i}----Similarity:0")
 
-'''
+# print(calculate_max_verlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2))
+
+
+
 
 
 
