@@ -76,9 +76,9 @@ def preprocess_img_byRmBackground(raw_image):
 
   bounding_boxes = []
   # 在原图上绘制边界框
-  for contour in contours:
-      x, y, w, h = cv2.boundingRect(contour)
-      bounding_boxes.append(((x, y), (x + w, y + h)))
+  # for contour in contours:
+  #     x, y, w, h = cv2.boundingRect(contour)
+  #     bounding_boxes.append(((x, y), (x + w, y + h)))
       #cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
 
@@ -283,7 +283,7 @@ def align_contours(contours1, contours2, hierarchy1, hierarchy2):
     center2 = tuple(np.mean(outer_contour2, axis=0).astype(int).flatten().tolist())
 
     # 旋转contours1中的所有轮廓
-    rotated_contours1 = rotate_contours(contours1, angle1 - angle2, center1)
+    rotated_contours1 = rotate_contours(contours1, angle2 - angle1, center1)
 
     return  rotated_contours1, hierarchy1, angle2 - angle1
 
@@ -316,7 +316,9 @@ def find_best_rotation(contours1, hierarchy1, image1,image2):
         if overlap > best_overlap:
             best_overlap = overlap
             best_angle = angle
+
             #print(best_angle,best_overlap)
+    rotated_contour1 = rotate_contours(contours1, best_angle, center1)
     return best_angle, best_overlap ,rotated_contour1,hierarchy1
 
 

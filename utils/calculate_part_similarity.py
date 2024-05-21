@@ -11,9 +11,14 @@ from feature_extract import (preprocess_img_byRmBackground,
                 show_mask,
                 find_best_rotation
                 )
+
+
 from statistics import mean
 import numpy as np
 import matplotlib.pyplot as plt
+
+
+
 
 #简单Hu矩对比最外层轮廓，不考虑孔洞——适用于简单情况
 def simple_HuMoment(image1,image2):
@@ -114,9 +119,11 @@ def calculate_orb(image1,image2):
 def calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2):
   contours1, hierarchy1, first_rotate_angle = align_contours(contours1, contours2, hierarchy1, hierarchy2)
   #print(first_rotate_angle)
+  
+  #image1.save('show_segment.jpg')
 
   best_angle, best_overlap ,rotated_contour1,hierarchy1=find_best_rotation(contours1, hierarchy1, image1,image2)
-  #print(best_angle, best_overlap)
+  # print(best_angle, best_overlap)
 
   image1=get_bitImage_byContours(rotated_contour1,hierarchy1)
  
@@ -135,9 +142,9 @@ def calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, imag
 device= "cuda" if torch.cuda.is_available() else "cpu"
 
 
-generator =  pipeline("mask-generation", model="facebook/sam-vit-base", device = device, points_per_batch = 256)
+generator =  pipeline("mask-generation", model="facebook/sam-vit-huge", device = device, points_per_batch = 256)
 
-preprocessed_image=preprocess_img_byRmBackground("./test_resource/test17.jpg")
+preprocessed_image=preprocess_img_byRmBackground("./test_resource/test142.jpg")
 
 
 
@@ -174,7 +181,7 @@ for i in range(len(data['parts'])):
   # image2 = cv2.cvtColor(cv2.cvtColor(np.array(image2), cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2GRAY)
   
   _ , ratio = calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2)
-  if ratio >0.90:  
+  if ratio >0.8:  
     print(f"该零件与图纸第{i}个零件的相似度为{ratio}")
  
 
@@ -182,9 +189,13 @@ for i in range(len(data['parts'])):
 # contours2,hierarchy2=extract_contours(data,33)
 
 # image2=get_bitImage_byContours(contours2,hierarchy2)
+# #contours1, hierarchy1, angle =align_contours(contours1, contours2, hierarchy1, hierarchy2)
+# # print(angle)
+# # image1=get_bitImage_byContours(contours1,hierarchy1)
+# # image1.save('show_segment.jpg')
+# # image2.save("show_yaml.jpg")
 
-
-# print(calculate_max_verlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2))
+# print(calculate_max_overlapArea(contours1, contours2, hierarchy1, hierarchy2, image1, image2))
 
 
 
